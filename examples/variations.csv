@@ -1,0 +1,26 @@
+parent_id,variation_id,attributes,regular_price,sale_price,sale_start,sale_end,stock,sku,enabled,backorder
+P-100,V-101,Size:S;Color:Red,29.99,24.99,2026-11-01,2026-11-30,12,TS-S-RED,yes,no
+P-100,V-102,Size:M;Color:Red,29.99,,,,8,TS-M-RED,yes,no
+P-100,V-103,Size:L;Color:Red,29.99,34.99,2026-11-01,2026-11-30,5,TS-L-RED,yes,no
+P-100,V-104,Size:S;Color:Blue,,,,,3,TS-S-BLU,yes,no
+P-100,V-105,Size:M;Color:Blue,29.99,19.99,2026-11-01,,0,TS-M-BLU,yes,no
+P-100,V-106,Size:L;Color:Blue,29.99,14.99,2026-10-01,2026-10-31,7,TS-L-BLU,yes,no
+P-100,V-107,Size:S;Color:Red,29.99,,,,4,TS-S-RED2,yes,no
+P-100,V-108,Size:XL;Color:Red,34.99,,,,0,TS-XL-RED,no,no
+P-200,V-201,Size:S;Color:Black,49.99,,,,6,HD-S-BLK,yes,no
+P-200,V-202,Size:M;Color:Black,49.99,39.99,2026-11-10,2026-11-25,0,HD-M-BLK,yes,yes
+P-200,V-203,Size:L;Color:Black,49.99,,,,9,TS-S-RED,yes,no
+P-200,V-204,Size:S;Color:Gray,49.99,,,,15,HD-S-GRY,no,no
+P-200,V-205,Size:M;Color:Gray,abc,,,,2,HD-M-GRY,yes,no
+P-200,V-206,Size:L;Color:Gray,-10.00,,,,2,HD-L-GRY,yes,no
+P-300,V-301,Color:White,14.99,,,,20,MG-WHT,yes,no
+P-300,V-302,Color:Black,14.99,9.99,2026-11-15,2026-11-10,11,MG-BLK,yes,no
+P-300,V-303,Color:Red,14.99,,,,0,MG-RED,yes,no
+P-300,V-304,Color:Blue,14.99,,,,5,,yes,no
+P-400,V-401,Size:One Size,19.99,,,,30,CP-OS,yes,no
+P-400,V-402,Size:One Size;Color:Navy,19.99,,,,30,CP-OS-NVY,yes,no
+BADROW,111,222
+P-400,,Size:Small,19.99,,,,3,CP-SM,yes,no
+P-400,V-403,Size:Small,19.99,,,,3,CP-SM,yes,no
+P-400,V-404,Size:Large,19.99,15.99,2026-13-01,2026-11-30,2,CP-LG,yes,no
+P-400,V-405,Size:Medium,19.99,,,,0,CP-MD,yes,no

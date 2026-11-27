@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Woo Variation Doctor - AamirTechs</title>
+<style>
+:root{--navy:#0b1f3a;--gold:#d4a72c;--bg:#f6f8fb;--ink:#1c2733;--muted:#5b6b7c;--line:#d9e1ea}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--navy);color:#fff;padding:28px 20px;border-bottom:4px solid var(--gold)}
+header .wrap{max-width:880px;margin:0 auto}
+header h1{margin:0 0 6px;font-size:1.6rem}
+header p{margin:0;color:#c8d4e4}
+main{max-width:880px;margin:24px auto;padding:0 20px}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:20px;box-shadow:0 1px 3px rgba(11,31,58,.08)}
+label{display:block;font-weight:600;margin:14px 0 6px}
+.card>label:first-child{margin-top:0}
+textarea{width:100%;min-height:180px;padding:10px;border:1px solid var(--line);border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.85rem}
+input[type=text],input[type=number],select{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:.95rem;width:100%}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:4px}
+.grid label{margin:0 0 6px}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+button{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:.95rem;cursor:pointer}
+button.alt{background:#fff;color:var(--navy);border:1px solid var(--navy)}
+button.gold{background:var(--gold);color:#0b1f3a;font-weight:600}
+pre{background:#0b1f3a;color:#eef3f9;border-radius:8px;padding:16px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;min-height:60px;font-size:.85rem}
+footer{max-width:880px;margin:0 auto 32px;padding:0 20px;color:var(--muted);font-size:.9rem}
+footer a{color:var(--navy)}
+.hint{color:var(--muted);font-size:.85rem;margin-top:6px;font-weight:400}
+</style>
+</head>
+<body>
+<header><div class="wrap"><h1>Woo Variation Doctor</h1><p>Audit a WooCommerce product variations CSV export for unpriced, mispriced, and duplicated variations.</p></div></header>
+<main><div class="card">
+<label for="file">Input CSV file</label>
+<input type="file" id="file" accept=".csv,text/csv">
+<label for="input">Or paste the variations CSV</label>
+<textarea id="input" spellcheck="false" placeholder="Paste a WooCommerce variations CSV export here, or load the sample."></textarea>
+<label>Options</label>
+<div class="grid">
+<div><label for="opt-maxvar">Max variations <span class="hint">(--max-variations)</span></label><input type="number" id="opt-maxvar" step="1" value="50"></div>
+<div><label for="opt-asof">As of date <span class="hint">(--as-of, blank means today)</span></label><input type="text" id="opt-asof" placeholder="2026-11-18"></div>
+</div>
+<div class="row"><button class="gold" id="run" type="button">Run check</button><button class="alt" id="sample" type="button">Load sample</button><button class="alt" id="download" type="button">Download report</button></div>
+<label for="out">Report</label>
+<pre id="out">Your report will appear here.</pre>
+</div></main>
+<footer>
+<p>Built by AamirTechs. <a href="https://aamirtechs.github.io/">All tools</a> | <a href="https://github.com/aamirtechs/woo-variation-doctor">Source</a></p>
+<p>Privacy: this tool runs 100% in your browser, nothing is uploaded.</p>
+</footer>
+<script id="core">
+// Pure logic port of woo_variation_doctor.py. No DOM access in this block.
+// Decimals are {c: BigInt coefficient, e: exponent} with value c * 10^e,
+// mirroring Python Decimal behaviour for the operations used here.
+function Dec(v) {
+  if (v && typeof v === "object" && typeof v.c === "bigint") return v;
+  var s = String(v).trim();
+  var m = /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/.exec(s);
+  if (!m) throw new Error("not a number: " + s);
+  var intPart = m[2] || "";
+  var fracPart = (m[3] !== undefined ? m[3] : (m[4] || ""));
+  var exp = (m[5] ? parseInt(m[5], 10) : 0) - fracPart.length;
+  var digits = (intPart + fracPart).replace(/^0+/, "");
+  if (digits === "") return { c: 0n, e: exp };
+  var c = BigInt(digits);
+  if (m[1] === "-") c = -c;
+  return { c: c, e: exp };
+}
+function decStr(d) {
+  if (d.c === 0n) {
+    if (d.e >= 0) return "0" + "0".repeat(d.e);
+    var z = "0.";
+    for (var i = 0; i < -d.e - 1; i++) z += "0";
+    return z + "0";
+  }
+  var neg = d.c < 0n;
+  var digits = (neg ? -d.c : d.c).toString();
+  var out;
+  if (d.e >= 0) out = digits + "0".repeat(d.e);
+  else {
+    var pos = digits.length + d.e;
+    if (pos > 0) out = digits.slice(0, pos) + "." + digits.slice(pos);
+    else out = "0." + "0".repeat(-pos) + digits;
+  }
+  return (neg ? "-" : "") + out;
+}
+function decCmp(a, b) {
+  var e = Math.min(a.e, b.e);
+  var ca = a.c * (10n ** BigInt(a.e - e));
+  var cb = b.c * (10n ** BigInt(b.e - e));
+  return ca < cb ? -1 : (ca > cb ? 1 : 0);
+}
+function decQuantize2(a) {
+  // Python Decimal.quantize(CENT) with the default context: half even.
+  if (a.e === -2) return { c: a.c, e: -2 };
+  if (a.e > -2) return { c: a.c * (10n ** BigInt(a.e + 2)), e: -2 };
+  var div = 10n ** BigInt(-2 - a.e);
+  var neg = a.c < 0n;
+  var abs = neg ? -a.c : a.c;
+  var q = abs / div;
+  var r = abs % div;
+  if (r * 2n > div || (r * 2n === div && (q & 1n) === 1n)) q += 1n;
+  return { c: neg ? -q : q, e: -2 };
+}
+function fmtMoney(v) {
+  if (v === null) return "n/a";
+  var s = decStr(decQuantize2(v));
+  var neg = s.charAt(0) === "-";
+  if (neg) s = s.slice(1);
+  var dot = s.indexOf(".");
+  var ip = dot >= 0 ? s.slice(0, dot) : s;
+  var rest = dot >= 0 ? s.slice(dot) : "";
+  ip = ip.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "$" + (neg ? "-" : "") + ip + rest;
+}
+function pyRepr(v) {
+  if (v === null || v === undefined) return "None";
+  if (typeof v === "string") {
+    var esc = v.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+    if (v.indexOf("'") >= 0 && v.indexOf('"') < 0) return '"' + esc + '"';
+    return "'" + esc.replace(/'/g, "\\'") + "'";
+  }
+  return String(v);
+}
+function parseCsvRows(text) {
+  var rows = [], row = [], field = "", inQuotes = false, i, ch;
+  text = String(text).replace(/^\uFEFF/, "");
+  for (i = 0; i < text.length; i++) {
+    ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(field); field = ""; }
+    else if (ch === "\r") { /* handled by \n */ }
+    else if (ch === "\n") { row.push(field); field = ""; rows.push(row); row = []; }
+    else field += ch;
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function findColumn(header, names) {
+  for (var i = 0; i < names.length; i++) if (header.indexOf(names[i]) >= 0) return names[i];
+  return null;
+}
+function cellsOf(header, row) {
+  var cells = {};
+  for (var i = 0; i < header.length; i++) cells[header[i]] = row[i].trim();
+  return cells;
+}
+function rowIsBlank(row) {
+  return row.length === 0 || row.every(function (c) { return c.trim() === ""; });
+}
+function F(subject, rule, severity, message) {
+  return { subject: subject, rule: rule, severity: severity, message: message };
+}
+function findingStr(f) {
+  return f.severity.toUpperCase() + " [" + f.rule + "] " + f.subject + ": " + f.message;
+}
+function daysFromCivil(y, mo, d) { return Math.floor(Date.UTC(y, mo - 1, d) / 86400000); }
+function isoDate(days) {
+  var dt = new Date(days * 86400000);
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
+  return dt.getUTCFullYear() + "-" + p2(dt.getUTCMonth() + 1) + "-" + p2(dt.getUTCDate());
+}
+function validDate(y, mo, d) {
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;
+  var chk = new Date(Date.UTC(y, mo - 1, d));
+  return chk.getUTCFullYear() === y && chk.getUTCMonth() === mo - 1 && chk.getUTCDate() === d;
+}
+function parseDateDays(text) {
+  if (text === null || text === undefined) return null;
+  var raw = String(text).trim();
+  if (!raw) return null;
+  var m, y, mo, d;
+  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:\s*[+-]\d{2}:?\d{2}|\s*Z)?)?$/.exec(raw)) ||
+      (m = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(raw))) {
+    y = +m[1]; mo = +m[2]; d = +m[3];
+    if (m[4] !== undefined && (+m[4] > 23 || +m[5] > 59)) return null;
+    return validDate(y, mo, d) ? daysFromCivil(y, mo, d) : null;
+  }
+  var tries = [
+    [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, "dmy"],
+    [/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, "mdy"],
+    [/^(\d{4})-(\d{1,2})-(\d{1,2}) (\d{1,2}):(\d{2}):(\d{2})$/, "ymd"],
+    [/^(\d{4})-(\d{1,2})-(\d{1,2})T(\d{1,2}):(\d{2}):(\d{2})$/, "ymd"]
+  ];
+  for (var i = 0; i < tries.length; i++) {
+    var mm = tries[i][0].exec(raw);
+    if (!mm) continue;
+    if (tries[i][1] === "dmy") { d = +mm[1]; mo = +mm[2]; y = +mm[3]; }
+    else if (tries[i][1] === "mdy") { mo = +mm[1]; d = +mm[2]; y = +mm[3]; }
+    else { y = +mm[1]; mo = +mm[2]; d = +mm[3]; if (+mm[4] > 23 || +mm[5] > 59 || +mm[6] > 60) continue; }
+    if (validDate(y, mo, d)) return daysFromCivil(y, mo, d);
+  }
+  return null;
+}
+function parseAsOf(text) {
+  if (text === null || text === undefined || String(text).trim() === "") {
+    var now = new Date();
+    return daysFromCivil(now.getUTCFullYear(), now.getUTCMonth() + 1, now.getUTCDate());
+  }
+  return parseDateDays(String(text).trim());
+}
+function parseMoney(text) {
+  if (text === null || text === undefined) return { value: null, valid: true, empty: true };
+  var raw = String(text).trim().split("$").join("").split(",").join("");
+  if (!raw) return { value: null, valid: true, empty: true };
+  var value;
+  try { value = Dec(raw); } catch (e) { return { value: null, valid: false, empty: false }; }
+  if (decCmp(value, Dec(0)) < 0) return { value: null, valid: false, empty: false };
+  return { value: value, valid: true, empty: false };
+}
+function parseStock(text) {
+  if (text === null || text === undefined) return { value: null, valid: true, empty: true };
+  var raw = String(text).trim().split(",").join("");
+  if (!raw) return { value: null, valid: true, empty: true };
+  if (!/^[+-]?\d+(_\d+)*$/.test(raw)) return { value: null, valid: false, empty: false };
+  var value = parseInt(raw.split("_").join(""), 10);
+  if (value < 0) return { value: null, valid: false, empty: false };
+  return { value: value, valid: true, empty: false };
+}
+function parseBool(text, dflt) {
+  if (text === null || text === undefined) return dflt;
+  var raw = String(text).trim().toLowerCase();
+  if (raw === "") return dflt;
+  if (["yes", "true", "1", "y", "publish", "active"].indexOf(raw) >= 0) return true;
+  if (["no", "false", "0", "n", "draft", "inactive"].indexOf(raw) >= 0) return false;
+  return null;
+}
+function parseAttributes(text) {
+  var bad = [], pairs = [];
+  if (text === null || text === undefined) return { key: [], bad: bad };
+  var raw = String(text).trim();
+  if (!raw) return { key: [], bad: bad };
+  raw.split(";").forEach(function (part) {
+    var entry = part.trim();
+    if (!entry) return;
+    var idx = entry.indexOf(":");
+    if (idx < 0) { bad.push(entry); return; }
+    var name = entry.slice(0, idx).trim().toLowerCase();
+    var value = entry.slice(idx + 1).trim().toLowerCase();
+    if (!name || !value) { bad.push(entry); return; }
+    pairs.push([name, value]);
+  });
+  pairs.sort(function (a, b) {
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
+    return a[1] < b[1] ? -1 : (a[1] > b[1] ? 1 : 0);
+  });
+  return { key: pairs, bad: bad };
+}
+function parseVariations(text) {
+  var findings = [], variations = [];
+  var rows = parseCsvRows(text);
+  if (!rows.length) throw new Error("input is empty, no header row found");
+  var header = rows[0].map(function (n) { return n.trim(); });
+  var parentCol = findColumn(header, ["parent_id", "parent", "parent_product_id", "product_id"]);
+  var variationCol = findColumn(header, ["variation_id", "variation", "id"]);
+  if (variationCol === null) throw new Error("input has no variation id column (header is: " + header.join(", ") + ")");
+  var attributesCol = findColumn(header, ["attributes", "attribute_values", "options", "attribute"]);
+  var regularCol = findColumn(header, ["regular_price", "regular", "price"]);
+  var saleCol = findColumn(header, ["sale_price", "sale"]);
+  var saleStartCol = findColumn(header, ["sale_start", "sale_start_date", "sale_from"]);
+  var saleEndCol = findColumn(header, ["sale_end", "sale_end_date", "sale_to", "sale_until"]);
+  var stockCol = findColumn(header, ["stock", "stock_quantity", "quantity", "stock_qty"]);
+  var skuCol = findColumn(header, ["sku"]);
+  var enabledCol = findColumn(header, ["enabled", "active", "status"]);
+  var backorderCol = findColumn(header, ["backorder", "backorders", "allow_backorders", "backordered"]);
+  var seenVariations = {}, seenSkus = {};
+  for (var i = 1; i < rows.length; i++) {
+    var row = rows[i], lineNumber = i + 1;
+    if (rowIsBlank(row)) continue;
+    if (row.length !== header.length) {
+      findings.push(F("row " + lineNumber, "malformed-row", "error",
+        "row has " + row.length + " fields but the header has " + header.length + ", so the row was skipped"));
+      continue;
+    }
+    var cells = cellsOf(header, row);
+    var variationId = cells[variationCol];
+    if (!variationId) {
+      findings.push(F("row " + lineNumber, "empty-variation", "error",
+        "row has no variation id, so the row was skipped"));
+      continue;
+    }
+    var vkey = variationId.toLowerCase();
+    if (seenVariations[vkey]) {
+      findings.push(F(variationId, "duplicate-variation", "error",
+        "variation id appears more than once, so the rows may be the same variation exported twice"));
+    } else seenVariations[vkey] = true;
+    var variation = { parentId: "", variationId: variationId, attributes: [],
+      attributesRaw: "", regularPrice: null, regularEmpty: true,
+      salePrice: null, saleEmpty: true, saleStart: null, saleStartRaw: "",
+      saleEnd: null, saleEndRaw: "", stock: null, stockEmpty: true,
+      sku: "", enabled: true, backorder: false, line: lineNumber };
+    if (parentCol !== null) variation.parentId = cells[parentCol];
+    if (attributesCol !== null) {
+      var rawAttr = cells[attributesCol];
+      variation.attributesRaw = rawAttr;
+      var parsedAttr = parseAttributes(rawAttr);
+      variation.attributes = parsedAttr.key;
+      parsedAttr.bad.forEach(function (entry) {
+        findings.push(F(variationId, "invalid-attribute", "error",
+          "attribute entry " + pyRepr(entry) + " is not a name:value pair (use Size:M)"));
+      });
+    }
+    if (regularCol !== null) {
+      var reg = parseMoney(cells[regularCol]);
+      variation.regularEmpty = reg.empty;
+      if (!reg.valid) {
+        findings.push(F(variationId, "invalid-price", "error",
+          "regular_price " + pyRepr(cells[regularCol]) + " is not a valid non-negative price"));
+      } else variation.regularPrice = reg.value;
+    }
+    if (saleCol !== null) {
+      var sale = parseMoney(cells[saleCol]);
+      variation.saleEmpty = sale.empty;
+      if (!sale.valid) {
+        findings.push(F(variationId, "invalid-price", "error",
+          "sale_price " + pyRepr(cells[saleCol]) + " is not a valid non-negative price"));
+      } else variation.salePrice = sale.value;
+    }
+    if (saleStartCol !== null) {
+      var rawStart = cells[saleStartCol];
+      variation.saleStartRaw = rawStart;
+      if (rawStart) {
+        var parsedStart = parseDateDays(rawStart);
+        if (parsedStart === null) {
+          findings.push(F(variationId, "invalid-date", "error",
+            "sale_start " + pyRepr(rawStart) + " is not a readable date (use 2026-11-18)"));
+        } else variation.saleStart = parsedStart;
+      }
+    }
+    if (saleEndCol !== null) {
+      var rawEnd = cells[saleEndCol];
+      variation.saleEndRaw = rawEnd;
+      if (rawEnd) {
+        var parsedEnd = parseDateDays(rawEnd);
+        if (parsedEnd === null) {
+          findings.push(F(variationId, "invalid-date", "error",
+            "sale_end " + pyRepr(rawEnd) + " is not a readable date (use 2026-11-18)"));
+        } else variation.saleEnd = parsedEnd;
+      }
+    }
+    if (stockCol !== null) {
+      var stk = parseStock(cells[stockCol]);
+      variation.stockEmpty = stk.empty;
+      if (!stk.valid) {
+        findings.push(F(variationId, "invalid-stock", "error",
+          "stock " + pyRepr(cells[stockCol]) + " is not a valid non-negative whole number"));
+      } else variation.stock = stk.value;
+    }
+    if (skuCol !== null) {
+      var sku = cells[skuCol];
+      variation.sku = sku;
+      if (sku) {
+        var skuKey = sku.toLowerCase();
+        if (seenSkus[skuKey]) {
+          findings.push(F(variationId, "duplicate-sku", "error",
+            "SKU " + sku + " is already used by another variation, so orders may pick the wrong variation"));
+        } else seenSkus[skuKey] = true;
+      }
+    }
+    if (enabledCol !== null) {
+      var rawEnabled = cells[enabledCol];
+      var enabledValue = parseBool(rawEnabled, true);
+      if (enabledValue === null) {
+        findings.push(F(variationId, "invalid-flag", "error",
+          "enabled " + pyRepr(rawEnabled) + " is not a yes or no value"));
+      } else variation.enabled = enabledValue;
+    }
+    if (backorderCol !== null) {
+      var rawBack = cells[backorderCol];
+      var backValue = parseBool(rawBack, false);
+      if (backValue === null) {
+        findings.push(F(variationId, "invalid-flag", "error",
+          "backorder " + pyRepr(rawBack) + " is not a yes or no value"));
+      } else variation.backorder = backValue;
+    }
+    variations.push(variation);
+  }
+  return { variations: variations, findings: findings };
+}
+function audit(variations, todayDays, maxVariations) {
+  var findings = [];
+  var parents = {};
+  variations.forEach(function (variation) {
+    var variationId = variation.variationId, parentId = variation.parentId;
+    var regular = variation.regularPrice, sale = variation.salePrice;
+    if (regular === null && !variation.regularEmpty) {
+      // Invalid price already reported during parsing.
+    } else if (regular === null) {
+      findings.push(F(variationId, "no-price", "error",
+        "variation has no regular price, so it is not purchasable even when the parent is published"));
+    }
+    if (sale !== null && regular !== null && decCmp(sale, regular) > 0) {
+      findings.push(F(variationId, "sale-above-regular", "error",
+        "sale price " + fmtMoney(sale) + " is above the regular price " + fmtMoney(regular)));
+    }
+    if (sale !== null && variation.saleEnd === null && variation.saleEndRaw === "") {
+      findings.push(F(variationId, "sale-no-end", "warning",
+        "sale price " + fmtMoney(sale) + " has no end date, so the sale runs forever unless someone removes it"));
+    }
+    if (variation.saleStart !== null && variation.saleEnd !== null && variation.saleStart > variation.saleEnd) {
+      findings.push(F(variationId, "invalid-sale-dates", "error",
+        "sale start " + isoDate(variation.saleStart) + " is after sale end " + isoDate(variation.saleEnd)));
+    } else if (sale !== null && variation.saleEnd !== null && variation.saleEnd < todayDays && variation.enabled) {
+      findings.push(F(variationId, "expired-sale-active", "error",
+        "sale ended " + isoDate(variation.saleEnd) + " but the sale price " + fmtMoney(sale) +
+        " is still set and the variation is still enabled"));
+    }
+    if (variation.stock !== null && variation.stock > 0 && !variation.enabled) {
+      findings.push(F(variationId, "stock-but-disabled", "warning",
+        "variation has " + variation.stock + " in stock but is disabled, so the stock cannot sell"));
+    }
+    if (variation.stock !== null && variation.stock === 0 && variation.enabled && !variation.backorder) {
+      findings.push(F(variationId, "zero-stock-enabled", "warning",
+        "variation is enabled with zero stock and no backorder, so customers see an option they cannot buy"));
+    }
+    if (parentId) {
+      var entry = parents[parentId] || (parents[parentId] = { variations: 0, attributes: {} });
+      entry.variations += 1;
+      var key = JSON.stringify(variation.attributes);
+      if (Object.prototype.hasOwnProperty.call(entry.attributes, key)) {
+        findings.push(F(variationId, "duplicate-attributes", "error",
+          "attribute combination " + variation.attributesRaw + " is already used by variation " +
+          entry.attributes[key] + " on parent " + parentId + ", so the two variations are the same option"));
+      } else entry.attributes[key] = variationId;
+    }
+  });
+  Object.keys(parents).sort().forEach(function (parentId) {
+    var entry = parents[parentId];
+    if (entry.variations > maxVariations) {
+      findings.push(F(parentId, "too-many-variations", "warning",
+        "parent has " + entry.variations + " variations, above the limit of " + maxVariations +
+        ", so the product may be too complex to shop"));
+    }
+  });
+  return findings;
+}
+function padRight(s, w) { s = String(s); while (s.length < w) s += " "; return s; }
+function padLeft(s, w) { s = String(s); while (s.length < w) s = " " + s; return s; }
+window.runTool = function (inputText, options) {
+  options = options || {};
+  var maxVariations = options.maxVariations === undefined || options.maxVariations === "" ? 50 : parseInt(options.maxVariations, 10);
+  var todayDays = parseAsOf(options.asOf);
+  if (todayDays === null) return "ERROR: --as-of " + pyRepr(options.asOf) + " is not a readable date\n";
+  var parsed;
+  try { parsed = parseVariations(inputText || ""); }
+  catch (e) { return "ERROR: " + e.message + "\n"; }
+  var variations = parsed.variations;
+  var findings = parsed.findings.concat(audit(variations, todayDays, maxVariations));
+  var errors = findings.filter(function (f) { return f.severity === "error"; }).length;
+  var warnings = findings.length - errors;
+  var onSale = variations.filter(function (v) { return v.salePrice !== null; }).length;
+  var noPrice = findings.filter(function (f) { return f.rule === "no-price"; }).length;
+  var dupSkus = findings.filter(function (f) { return f.rule === "duplicate-sku"; }).length;
+  var parentMap = {};
+  variations.forEach(function (variation) {
+    var parentId = variation.parentId || "(no parent)";
+    var entry = parentMap[parentId] || (parentMap[parentId] = { parent: parentId, variations: 0, prices: [], onSale: 0 });
+    entry.variations += 1;
+    if (variation.regularPrice !== null) entry.prices.push(variation.regularPrice);
+    if (variation.salePrice !== null) entry.onSale += 1;
+  });
+  var perParent = Object.keys(parentMap).sort().map(function (k) {
+    var e = parentMap[k];
+    var minPrice = null, maxPrice = null;
+    e.prices.forEach(function (p) {
+      if (minPrice === null || decCmp(p, minPrice) < 0) minPrice = p;
+      if (maxPrice === null || decCmp(p, maxPrice) > 0) maxPrice = p;
+    });
+    return { parent: e.parent, variations: e.variations, minPrice: minPrice, maxPrice: maxPrice, onSale: e.onSale };
+  });
+  var lines = findings.map(findingStr);
+  lines.push("");
+  lines.push("Variations: " + variations.length + ", parents: " + perParent.length +
+    ", findings: " + findings.length + ", errors: " + errors + ", warnings: " + warnings);
+  lines.push("On sale: " + onSale + ", variations with no price: " + noPrice + ", duplicate SKUs: " + dupSkus);
+  lines.push("");
+  lines.push("Per-parent summary:");
+  lines.push(padRight("parent", 10) + " " + padLeft("variations", 10) + " " + padLeft("min price", 11) +
+    " " + padLeft("max price", 11) + " " + padLeft("on sale", 7));
+  perParent.forEach(function (entry) {
+    lines.push(padRight(entry.parent, 10) + " " + padLeft(entry.variations, 10) + " " +
+      padLeft(fmtMoney(entry.minPrice), 11) + " " + padLeft(fmtMoney(entry.maxPrice), 11) +
+      " " + padLeft(entry.onSale, 7));
+  });
+  if (findings.length === 0) { lines.push(""); lines.push("All variations clean."); }
+  return lines.join("\n") + "\n";
+};
+</script>
+<script>
+var SAMPLE = `parent_id,variation_id,attributes,regular_price,sale_price,sale_start,sale_end,stock,sku,enabled,backorder
+P-100,V-101,Size:S;Color:Red,29.99,24.99,2026-11-01,2026-11-30,12,TS-S-RED,yes,no
+P-100,V-102,Size:M;Color:Red,29.99,,,,8,TS-M-RED,yes,no
+P-100,V-103,Size:L;Color:Red,29.99,34.99,2026-11-01,2026-11-30,5,TS-L-RED,yes,no
+P-100,V-104,Size:S;Color:Blue,,,,,3,TS-S-BLU,yes,no
+P-100,V-105,Size:M;Color:Blue,29.99,19.99,2026-11-01,,0,TS-M-BLU,yes,no
+P-100,V-106,Size:L;Color:Blue,29.99,14.99,2026-10-01,2026-10-31,7,TS-L-BLU,yes,no
+P-100,V-107,Size:S;Color:Red,29.99,,,,4,TS-S-RED2,yes,no
+P-100,V-108,Size:XL;Color:Red,34.99,,,,0,TS-XL-RED,no,no
+P-200,V-201,Size:S;Color:Black,49.99,,,,6,HD-S-BLK,yes,no
+P-200,V-202,Size:M;Color:Black,49.99,39.99,2026-11-10,2026-11-25,0,HD-M-BLK,yes,yes
+P-200,V-203,Size:L;Color:Black,49.99,,,,9,TS-S-RED,yes,no
+P-200,V-204,Size:S;Color:Gray,49.99,,,,15,HD-S-GRY,no,no
+P-200,V-205,Size:M;Color:Gray,abc,,,,2,HD-M-GRY,yes,no
+P-200,V-206,Size:L;Color:Gray,-10.00,,,,2,HD-L-GRY,yes,no
+P-300,V-301,Color:White,14.99,,,,20,MG-WHT,yes,no
+P-300,V-302,Color:Black,14.99,9.99,2026-11-15,2026-11-10,11,MG-BLK,yes,no
+P-300,V-303,Color:Red,14.99,,,,0,MG-RED,yes,no
+P-300,V-304,Color:Blue,14.99,,,,5,,yes,no
+P-400,V-401,Size:One Size,19.99,,,,30,CP-OS,yes,no
+P-400,V-402,Size:One Size;Color:Navy,19.99,,,,30,CP-OS-NVY,yes,no
+BADROW,111,222
+P-400,,Size:Small,19.99,,,,3,CP-SM,yes,no
+P-400,V-403,Size:Small,19.99,,,,3,CP-SM,yes,no
+P-400,V-404,Size:Large,19.99,15.99,2026-13-01,2026-11-30,2,CP-LG,yes,no
+P-400,V-405,Size:Medium,19.99,,,,0,CP-MD,yes,no
+`;
+var inputEl = document.getElementById("input");
+var outEl = document.getElementById("out");
+var lastReport = "";
+document.getElementById("file").addEventListener("change", function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  if (!f) return;
+  var reader = new FileReader();
+  reader.onload = function () { inputEl.value = String(reader.result || ""); };
+  reader.readAsText(f);
+});
+document.getElementById("sample").addEventListener("click", function () { inputEl.value = SAMPLE; });
+document.getElementById("run").addEventListener("click", function () {
+  var options = {
+    maxVariations: document.getElementById("opt-maxvar").value,
+    asOf: document.getElementById("opt-asof").value
+  };
+  try {
+    lastReport = window.runTool(inputEl.value, options);
+    outEl.textContent = lastReport;
+  } catch (e) {
+    lastReport = "ERROR: " + e.message + "\n";
+    outEl.textContent = lastReport;
+  }
+});
+document.getElementById("download").addEventListener("click", function () {
+  var text = lastReport || outEl.textContent;
+  var blob = new Blob([text], { type: "text/plain" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "woo-variation-report.txt";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>

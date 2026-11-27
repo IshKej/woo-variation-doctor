@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "woo-variation-doctor"
+version = "1.0.0"
+description = "Audit a WooCommerce product variations CSV export for unpriced, mispriced, and duplicated variations"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+[project.scripts]
+woo-variation-doctor = "woo_variation_doctor:main_entry"
+
+[tool.setuptools]
+py-modules = ["woo_variation_doctor"]

@@ -1,0 +1,4 @@
+parent_id,variation_id,attributes,regular_price,sale_price,sale_start,sale_end,stock,sku,enabled,backorder
+P-100,V-101,Size:S;Color:Red,29.99,24.99,2026-11-01,2026-11-30,12,TS-S-RED,yes,no
+P-100,V-102,Size:M;Color:Red,29.99,,,,8,TS-M-RED,yes,no
+P-200,V-201,Size:S;Color:Black,49.99,,,,6,HD-S-BLK,yes,no
